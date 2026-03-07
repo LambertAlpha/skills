@@ -36,7 +36,20 @@ def _load_secret(arg):
     return arg
 
 
-def _download_audio(video_url, tmpdir, proxy=None):
+def _download_audio(video_url, tmpdir, proxy=None, bili_info=None):
+    """Download audio with yt-dlp, fallback to Bilibili playurl API. Returns audio file path or None."""
+    audio_file = _download_audio_ytdlp(video_url, tmpdir, proxy=proxy)
+    if audio_file:
+        return audio_file
+
+    # Fallback: Bilibili playurl API (bypasses yt-dlp 412 blocks on VPS/datacenter IPs)
+    if bili_info and bili_info.get("bvid") and bili_info.get("cid"):
+        return _download_bilibili_audio(bili_info, tmpdir, proxy=proxy)
+
+    return None
+
+
+def _download_audio_ytdlp(video_url, tmpdir, proxy=None):
     """Download audio with yt-dlp. Returns audio file path or None."""
     if not shutil.which("yt-dlp"):
         print("WARN: yt-dlp not found, cannot download audio", file=sys.stderr)
@@ -62,6 +75,67 @@ def _download_audio(video_url, tmpdir, proxy=None):
             return os.path.join(tmpdir, f)
     print("WARN: No audio file downloaded", file=sys.stderr)
     return None
+
+
+def _download_bilibili_audio(bili_info, tmpdir, proxy=None):
+    """Download audio via Bilibili playurl API. Returns audio file path or None."""
+    import requests
+
+    bvid = bili_info["bvid"]
+    cid = bili_info["cid"]
+    cookie = bili_info.get("cookie")
+
+    api = f"https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&fnval=16&fourk=1"
+    proxies = {"https": proxy, "http": proxy} if proxy else {}
+
+    print("INFO: Trying Bilibili playurl API for audio...", file=sys.stderr)
+    try:
+        resp = requests.get(api, proxies=proxies, headers=_bili_headers(cookie), timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != 0:
+            print(f"WARN: Bilibili playurl: {data.get('message')}", file=sys.stderr)
+            return None
+
+        dash = data.get("data", {}).get("dash")
+        if not dash or not dash.get("audio"):
+            print("WARN: Bilibili playurl: no DASH audio streams", file=sys.stderr)
+            return None
+
+        # Pick highest quality audio stream
+        audio_streams = sorted(dash["audio"], key=lambda a: a.get("bandwidth", 0), reverse=True)
+        audio_url = audio_streams[0].get("baseUrl") or audio_streams[0].get("base_url")
+        if not audio_url:
+            return None
+
+        # Download m4s audio
+        m4s_path = os.path.join(tmpdir, "audio.m4s")
+        print(f"INFO: Downloading audio stream from Bilibili...", file=sys.stderr)
+        dl_headers = _bili_headers(cookie)
+        dl_headers["Referer"] = f"https://www.bilibili.com/video/{bvid}"
+        r = requests.get(audio_url, headers=dl_headers, proxies=proxies, stream=True, timeout=(15, 300))
+        r.raise_for_status()
+        with open(m4s_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 64):
+                f.write(chunk)
+
+        # Convert to mp3 with ffmpeg
+        mp3_path = os.path.join(tmpdir, "audio.mp3")
+        if shutil.which("ffmpeg"):
+            print("INFO: Converting to mp3 with ffmpeg...", file=sys.stderr)
+            subprocess.run(
+                ["ffmpeg", "-i", m4s_path, "-vn", "-acodec", "libmp3lame", "-q:a", "5", mp3_path, "-y"],
+                check=True, capture_output=True, timeout=120,
+            )
+            return mp3_path
+        else:
+            # No ffmpeg, return m4s directly (ElevenLabs accepts various formats)
+            print("INFO: No ffmpeg, using m4s format directly", file=sys.stderr)
+            return m4s_path
+
+    except Exception as e:
+        print(f"WARN: Bilibili audio download failed: {e}", file=sys.stderr)
+        return None
 
 
 # ── YouTube ─────────────────────────────────────────────────────────────────
@@ -231,7 +305,7 @@ def fetch_bilibili_subtitle(bvid, cid, proxy=None, cookie=None):
 
 # ── STT: ElevenLabs ────────────────────────────────────────────────────────
 
-def fetch_via_elevenlabs(video_url, proxy=None, api_key=None, language=None):
+def fetch_via_elevenlabs(video_url, proxy=None, api_key=None, language=None, bili_info=None):
     """Download audio with yt-dlp, transcribe with ElevenLabs STT API."""
     if not api_key:
         api_key = os.environ.get("ELEVENLABS_API_KEY")
@@ -242,7 +316,7 @@ def fetch_via_elevenlabs(video_url, proxy=None, api_key=None, language=None):
     import requests
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        audio_file = _download_audio(video_url, tmpdir, proxy=proxy)
+        audio_file = _download_audio(video_url, tmpdir, proxy=proxy, bili_info=bili_info)
         if not audio_file:
             return None
 
@@ -279,14 +353,14 @@ def fetch_via_elevenlabs(video_url, proxy=None, api_key=None, language=None):
 
 # ── STT: Whisper (local) ───────────────────────────────────────────────────
 
-def fetch_via_whisper(video_url, proxy=None, model="base"):
+def fetch_via_whisper(video_url, proxy=None, model="base", bili_info=None):
     """Download audio with yt-dlp, transcribe with local Whisper."""
     if not shutil.which("whisper"):
         print("WARN: 'whisper' not found, skipping local Whisper", file=sys.stderr)
         return None
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        audio_file = _download_audio(video_url, tmpdir, proxy=proxy)
+        audio_file = _download_audio(video_url, tmpdir, proxy=proxy, bili_info=bili_info)
         if not audio_file:
             return None
 
@@ -317,21 +391,21 @@ def fetch_via_whisper(video_url, proxy=None, model="base"):
 
 # ── STT dispatcher ─────────────────────────────────────────────────────────
 
-def fetch_via_stt(video_url, stt, proxy=None, api_key=None, whisper_model="base", language=None):
+def fetch_via_stt(video_url, stt, proxy=None, api_key=None, whisper_model="base", language=None, bili_info=None):
     """Try STT transcription. Returns text or None."""
     if stt == "none":
         return None
 
     if stt == "elevenlabs":
-        text = fetch_via_elevenlabs(video_url, proxy=proxy, api_key=api_key, language=language)
+        text = fetch_via_elevenlabs(video_url, proxy=proxy, api_key=api_key, language=language, bili_info=bili_info)
         if text:
             return text
         # Auto-fallback to Whisper
         print("INFO: ElevenLabs unavailable, trying local Whisper...", file=sys.stderr)
-        return fetch_via_whisper(video_url, proxy=proxy, model=whisper_model)
+        return fetch_via_whisper(video_url, proxy=proxy, model=whisper_model, bili_info=bili_info)
 
     if stt == "whisper":
-        return fetch_via_whisper(video_url, proxy=proxy, model=whisper_model)
+        return fetch_via_whisper(video_url, proxy=proxy, model=whisper_model, bili_info=bili_info)
 
     return None
 
@@ -386,9 +460,15 @@ def main():
 
         if not content and args.stt != "none":
             video_url = f"https://www.bilibili.com/video/{bvid}"
+            bili_dl_info = {
+                "bvid": info.get("bvid", bvid) if info else bvid,
+                "cid": info["cid"] if info else None,
+                "cookie": cookie,
+            } if info else None
             content = fetch_via_stt(
                 video_url, args.stt, proxy=args.proxy,
                 api_key=stt_api_key, whisper_model=args.whisper_model,
+                bili_info=bili_dl_info,
             )
             if content:
                 source = f"stt:{args.stt}"
