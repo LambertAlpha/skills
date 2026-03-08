@@ -5,6 +5,17 @@ description: Fetch, transcribe, and summarize any YouTube or Bilibili video. 4-l
 
 # Video Content Fetcher (YouTube & Bilibili)
 
+## Script Location
+
+The main script is `scripts/youtube_fetch.py` **relative to this skill's directory** (not the user's working directory).
+
+When running commands, always resolve the full path first. For example, if this skill is installed at `~/.claude/skills/video-fetch/`, run:
+```bash
+python3 ~/.claude/skills/video-fetch/scripts/youtube_fetch.py VIDEO_URL [options]
+```
+
+**Tip:** To find the script path dynamically, locate this SKILL.md file and append `scripts/youtube_fetch.py` to its parent directory.
+
 ## Before You Start
 
 This skill needs **1-3 things configured** depending on your use case:
