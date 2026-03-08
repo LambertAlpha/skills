@@ -1,5 +1,7 @@
-name: Video Fetch — YouTube & Bilibili
+---
+name: video-fetch
 description: Fetch, transcribe, and summarize any YouTube or Bilibili video. 4-level fallback: subtitle API → ElevenLabs STT (cloud, high-accuracy) → local Whisper → description. Supports proxy for geo-blocked regions, Bilibili cookie auth, and auto-translation to user's language. Use when the user shares a video link or asks to summarize/analyze a video.
+---
 
 # Video Content Fetcher (YouTube & Bilibili)
 
