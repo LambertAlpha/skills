@@ -15,3 +15,9 @@ clawhub install video-fetch
 ```
 
 [View on ClawHub](https://clawhub.ai/LambertAlpha/video-fetch)
+
+### [weekly-report](./weekly-report)
+
+Auto-generate institutional-grade macro research weekly reports from Research OS model outputs (Liquidity v3.0 + Macro v4.0 + Equity v1.0), then publish to Lark (飞书) group chat.
+
+Fetches model data via API → Claude generates report with full analysis → sends to Lark webhook.
