@@ -31,3 +31,15 @@ Bypasses desktop CAPTCHA using mobile User-Agent (MicroMessenger), with automati
 ```bash
 python3 scripts/wechat_reader.py "https://mp.weixin.qq.com/s/xxxxx" --full
 ```
+
+### [meitou-daily](./meitou-daily)
+
+Daily investment research agent for [jdbinvesting.com](https://www.jdbinvesting.com/) (美投) — the leading Chinese-language US stock research platform.
+
+Reverse-engineered the platform's GraphQL API (43 queries, 68 mutations, 78 fragments) to auto-fetch stock quotes, video analyses with full-text content, 71 investment topic categories, and community activity. Generates structured daily research reports and pushes to Lark or Telegram.
+
+**Requires:** A jdbinvesting.com account, `boto3`, `warrant-lite`
+
+```
+/meitou-daily
+```
